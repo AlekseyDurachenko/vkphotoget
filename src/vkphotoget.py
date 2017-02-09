@@ -62,7 +62,7 @@ def api_call(query, access_token=None, verbose=False):
     while True:
         if verbose:
             print("Query: %s" (url,))
-        data = json.loads(urllib.request.urlopen(url).readall().decode('utf-8'))
+        data = json.loads(urllib.request.urlopen(url).read().decode('utf-8'))
         if "error" in data:
             # too many queries per second. wait and retry
             if data["error"]["error_code"] == 6:
