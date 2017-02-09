@@ -46,6 +46,8 @@ def create_parser():
                         help='your access token')
     parser.add_argument('--dst', action='store', default="",
                         help='the output directory')
+    parser.add_argument('--overwrite', action='store_true',
+                        help='overwrite existing files')
     parser.add_argument('url', help='the url of the photo album')
     return parser.parse_args()
 
@@ -274,6 +276,7 @@ def main():
     parser = create_parser()
     access_token = parser.access_token
     verbose = parser.verbose
+    overwrite = parser.overwrite
     dst_dir = parser.dst
 
     # try to read access token from config file
@@ -291,10 +294,13 @@ def main():
     for photo in photos:
         print("Downloading the photo: %s of %s..." % (current_photo_index, len(photos),))
         dst_filename = filename_from_photo(photo, dst_dir)
-        if not download_photo(photo["link"], dst_filename):
-            print("... Failed!")
+        if overwrite or not os.path.exists(dst_filename):
+            if download_photo(photo["link"], dst_filename):
+                apply_metadata(dst_filename, photo, verbose)
+            else:
+                print("... Failed!")
         else:
-            apply_metadata(dst_filename, photo, verbose)
+            print("... already exists, skipped")
         current_photo_index += 1
 
 
