@@ -249,6 +249,8 @@ def apply_metadata(dst_filename, photo, verbose=False):
     cmd = "exiftool" +                                          \
           " -overwrite_original" +                              \
           " -artist=" + shlex.quote(photo["artist"]) +          \
+          " -xmp:Artist=" + shlex.quote(photo["artist"]) +      \
+          " -xmp:Creator=" + shlex.quote(photo["artist"]) +     \
           " -title=" + shlex.quote(photo["album_title"]) +      \
           " -description=" + shlex.quote(photo["desc"]) +       \
           " -AllDates=" + shlex.quote(
