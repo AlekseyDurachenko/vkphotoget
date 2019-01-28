@@ -38,6 +38,8 @@ def description():
 
 def create_parser():
     parser = argparse.ArgumentParser(description=description())
+    parser.add_argument('--artist', action='store', default=None,
+                        help='type author name')
     parser.add_argument('--version', action='version',
                         version="%(prog)s " + version())
     parser.add_argument('--verbose', action='store_true',
@@ -63,15 +65,16 @@ def api_call(query, access_token=None, verbose=False):
         url += "&access_token=%s" % (access_token,)
     while True:
         if verbose:
-            print("Query: %s" (url,))
+            print("Query: %s" % (url,))
         data = json.loads(urllib.request.urlopen(url).read().decode('utf-8'))
+        print(data)
         if "error" in data:
             # too many queries per second. wait and retry
             if data["error"]["error_code"] == 6:
                 time.sleep(1)
                 continue
             if verbose:
-                print("Query: %s" (url,))
+                print("Query: %s" % (url,))
             return None
         return data["response"]
 
@@ -91,6 +94,8 @@ def api_multi_query(query, item_per_page, access_token=None, verbose=False):
         if response is None:
             return None
         pages.append(response)
+        if 'count' not in response:
+            break
         if response['count'] <= offset + item_per_page:
             break
         offset += item_per_page
@@ -162,7 +167,7 @@ def api_album_tags(owner_id, photo_id, access_token=None, verbose=False):
 #   - y1
 #   - x2
 #   - y2
-def api_photos_get(owner_id, album_id, access_token=None, verbose=False):
+def api_photos_get(owner_id, album_id, access_token=None, verbose=False, artist=None):
     photos_pages = api_multi_query(
             "photos.get?"
             "owner_id=%s&"
@@ -170,6 +175,7 @@ def api_photos_get(owner_id, album_id, access_token=None, verbose=False):
             "rev=0&"
             "extended=1" % (owner_id, album_id,),
             1000, access_token, verbose)
+
     authors = dict()
     albums = dict()
     photos = []
@@ -213,12 +219,88 @@ def api_photos_get(owner_id, album_id, access_token=None, verbose=False):
                 albums[owner_id + "_" + album_id] = api_album_title_and_desc(owner_id, album_id, access_token, verbose)
             photo["album_title"] = albums[owner_id + "_" + album_id]["title"]
             photo["album_desc"] = albums[owner_id + "_" + album_id]["desc"]
+            if artist is not None:
+                photo["artist"] = artist
             # tags
             if int(item["tags"]["count"]) > 0:
                 photo["tags"] = api_album_tags(owner_id, item["id"], access_token, verbose)
             else:
                 photo["tags"] = []
             photos.append(photo)
+    return photos
+
+
+# return list of photo objects:
+# the object fields:
+# - artist
+# - album_title
+# - album_desc
+# - desc
+# - date
+# - lat (may not exists)
+# - lon (may not exists)
+# - link
+# - tags - list of objects
+#   - name
+#   - x1
+#   - y1
+#   - x2
+#   - y2
+def api_photos_get_by_id(owner_id, photo_ids, access_token=None, verbose=False, artist=None):
+    query_str = "photos.getById?photos=%s&rev=0&extended=1" % (",".join(photo_ids),)
+    items = api_multi_query(query_str, 1000, access_token, verbose)
+    authors = dict()
+    albums = dict()
+    photos = []
+    for item in items[0]:
+        photo = dict()
+        photo["date"] = item["date"]
+        # desc
+        photo["desc"] = item["text"]
+        # gps coordinate
+        if "lat" in item:
+            photo["lat"] = item["lat"]
+        if "long" in item:
+            photo["lon"] = item["long"]
+        # best image size
+        if "photo_2560" in item:
+            photo["link"] = item["photo_2560"]
+        elif "photo_1280" in item:
+            photo["link"] = item["photo_1280"]
+        elif "photo_807" in item:
+            photo["link"] = item["photo_807"]
+        elif "photo_604" in item:
+            photo["link"] = item["photo_604"]
+        elif "photo_130" in item:
+            photo["link"] = item["photo_130"]
+        elif "photo_75" in item:
+            photo["link"] = item["photo_75"]
+        else:
+            photo["link"] = None
+        # owner name
+        if "user_id" not in item:
+            item["user_id"] = item["owner_id"]
+        if item["user_id"] not in authors:
+            if item["user_id"] == 100:
+                authors[item["user_id"]] = api_group_name(owner_id, access_token, verbose)
+            else:
+                authors[item["user_id"]] = api_user_name(item["user_id"], access_token, verbose)
+        photo["artist"] = authors[item["user_id"]]
+        # album name and description
+        #if owner_id + "_" + album_id not in albums:
+        #    albums[owner_id + "_" + album_id] = api_album_title_and_desc(owner_id, album_id, access_token, verbose)
+        #photo["album_title"] = albums[owner_id + "_" + album_id]["title"]
+        #photo["album_desc"] = albums[owner_id + "_" + album_id]["desc"]
+        photo["album_desc"] = ""
+        photo["album_title"] = ""
+        if artist is not None:
+            photo["artist"] = artist
+        # tags
+        if int(item["tags"]["count"]) > 0:
+            photo["tags"] = api_album_tags(owner_id, item["id"], access_token, verbose)
+        else:
+            photo["tags"] = []
+        photos.append(photo)
     return photos
 
 
@@ -266,16 +348,27 @@ def extract_owner_and_album_from_url(url):
     regexp = "(.{0,})album([-]{0,1}[0-9]{1,})_([0-9]{1,})(.{0,})"
     m = re.match(regexp, url)
     if m is None:
-        print("Can't parse URL")
-        sys.exit(1)
+        return None
     return {
         "owner": m.group(2),
         "album": m.group(3)
     }
 
 
+def extract_owner_and_photo_from_url(url):
+    regexp = "(.{0,})photo([-]{0,1}[0-9]{1,})_([0-9]{1,})(.{0,})"
+    m = re.match(regexp, url)
+    if m is None:
+        return None
+    return {
+        "owner": m.group(2),
+        "photo": m.group(3)
+    }
+
+
 def main():
     parser = create_parser()
+    artist = parser.artist
     access_token = parser.access_token
     verbose = parser.verbose
     overwrite = parser.overwrite
@@ -287,24 +380,42 @@ def main():
         if os.path.exists(vk_filename):
             access_token = open(vk_filename).readline().strip()
 
-    value = extract_owner_and_album_from_url(parser.url)
-    owner_id = value["owner"]
-    album_id = value["album"]
+    value_photo = extract_owner_and_photo_from_url(parser.url)
+    value_album = extract_owner_and_album_from_url(parser.url)
+    if value_photo is not None:
+        owner_id = value_photo["owner"]
+        photo_id = value_photo["photo"]
 
-    photos = api_photos_get(owner_id, album_id, access_token, verbose)
-    current_photo_index = 1
-    for photo in photos:
-        print("Downloading the photo: %s of %s..." % (current_photo_index, len(photos),))
-        dst_filename = filename_from_photo(photo, dst_dir)
-        if overwrite or not os.path.exists(dst_filename):
-            if download_photo(photo["link"], dst_filename):
-                apply_metadata(dst_filename, photo, verbose)
+        photos = api_photos_get_by_id(owner_id, ["%s_%s" % (owner_id, photo_id,)], access_token, verbose, artist)
+        current_photo_index = 1
+        for photo in photos:
+            print("Downloading the photo: %s of %s..." % (current_photo_index, len(photos),))
+            dst_filename = filename_from_photo(photo, dst_dir)
+            if overwrite or not os.path.exists(dst_filename):
+                if download_photo(photo["link"], dst_filename):
+                    apply_metadata(dst_filename, photo, verbose)
+                else:
+                    print("... Failed!")
             else:
-                print("... Failed!")
-        else:
-            print("... already exists, skipped")
-        current_photo_index += 1
+                print("... already exists, skipped")
+            current_photo_index += 1
+    elif value_album is not None:
+        owner_id = value_album["owner"]
+        album_id = value_album["album"]
 
+        photos = api_photos_get(owner_id, album_id, access_token, verbose, artist)
+        current_photo_index = 1
+        for photo in photos:
+            print("Downloading the photo: %s of %s..." % (current_photo_index, len(photos),))
+            dst_filename = filename_from_photo(photo, dst_dir)
+            if overwrite or not os.path.exists(dst_filename):
+                if download_photo(photo["link"], dst_filename):
+                    apply_metadata(dst_filename, photo, verbose)
+                else:
+                    print("... Failed!")
+            else:
+                print("... already exists, skipped")
+            current_photo_index += 1
 
 if __name__ == "__main__":
     main()
